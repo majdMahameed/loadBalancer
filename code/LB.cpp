@@ -35,11 +35,22 @@ struct Backend {
     enum Role { VIDEO, MUSIC } role;
     std::string ip;
     uint16_t    port;
+    int         fd;          // persistent socket (‑1 == disconnected)
+    std::mutex  mtx;         // protects writes/reads on this socket
+    double      vfinish;     // virtual finish‑time (seconds since start)
 
-    int   fd;          // persistent socket (‑1 == disconnected)
-    std::mutex mtx;    // protects writes/reads on this socket
+    // constructor for emplace_back
+    Backend(Role r, const std::string& ip_, uint16_t p)
+        : role(r), ip(ip_), port(p), fd(-1), vfinish(0) {}
 
-    double vfinish;    // virtual finish‑time (seconds since start)
+    // disable copy, enable move (required because std::mutex is non‑copyable)
+    Backend(const Backend&) = delete;
+    Backend& operator=(const Backend&) = delete;
+    Backend(Backend&& other) noexcept
+        : role(other.role), ip(std::move(other.ip)), port(other.port), fd(other.fd), vfinish(other.vfinish) {
+        other.fd = -1;
+    }
+    Backend& operator=(Backend&&) = delete;
 };
 
 static ssize_t read_n(int fd, void* buf, size_t n) {
