@@ -170,11 +170,10 @@ static void handle_client(int cfd) {
 int main() {
     start_ts = clock_t::now();
 
-    backends = {
-        {Backend::VIDEO, "192.168.0.101", 80, -1},
-        {Backend::VIDEO, "192.168.0.102", 80, -1},
-        {Backend::MUSIC, "192.168.0.103", 80, -1},
-    };
+    backends.reserve(3);
+    backends.emplace_back(Backend::VIDEO, "192.168.0.101", 80);
+    backends.emplace_back(Backend::VIDEO, "192.168.0.102", 80);
+    backends.emplace_back(Backend::MUSIC, "192.168.0.103", 80);
 
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) { perror("socket"); return 1; }
