@@ -1,11 +1,8 @@
 /*
- * lb_smartLB.cpp – SERPT scheduler, hardened for edge‑cases
- * ---------------------------------------------------------
- *  + Rejects malformed requests (wrong length, bad letter, digit 0/ >9).
- *  + Caps simultaneous worker threads to avoid fork‑bombing by bogus clients.
- *  + Clean SIGINT/SIGTERM shutdown => closes listening + backend sockets.
+ * lb_smartLB.cpp – SERPT scheduler, edge‑case hardened (compile‑fix)
  *
- *  (Normal behaviour for valid M/V/P requests is unchanged.)
+ * 2025‑07‑02 fix: removed unique_ptr‑on‑stack trick that broke on GCC 4.8.
+ * Manually closes client fd on every return path instead.
  */
 
 #include <arpa/inet.h>
@@ -105,28 +102,34 @@ static int listen_fd = -1;                            // for signal handler
 
 // ───────────── Worker thread ───────────────────────────────────────────────
 static void handle_client(int cfd) {
-    std::unique_ptr<int, decltype(&close)> guard(&cfd, &close);  // auto‑close
+    // ------- helper lambda to close and early‑return
+    auto bail = [&](bool already_closed = false) {
+        if (!already_closed) close(cfd);
+        active_workers.fetch_sub(1, std::memory_order_relaxed);
+    };
 
     char req[2];
-    if (read_n(cfd, req, 2) != 2) return;             // EOF / short read
+    if (read_n(cfd, req, 2) != 2) { bail(); return; }
 
     char type = req[0];
-    if (type != 'M' && type != 'V' && type != 'P') return;   // invalid letter
+    if (type != 'M' && type != 'V' && type != 'P') { bail(); return; }
 
     int base = req[1] - '0';
-    if (base < 1 || base > 9) return;                 // digit out of range
+    if (base < 1 || base > 9) { bail(); return; }
 
     size_t idx = pick_backend(type, base);
     Backend& b = backends[idx];
-    if (!ensure_connected(b)) return;
+    if (!ensure_connected(b)) { bail(); return; }
 
-    std::lock_guard<std::mutex> lg(b.mtx);
-    if (write_n(b.fd, req, 2) != 2) { close(b.fd); b.fd = -1; return; }
-
-    char resp[1024];
-    ssize_t n = recv(b.fd, resp, sizeof(resp), 0);
-    if (n > 0) write_n(cfd, resp, static_cast<size_t>(n));
-    else { close(b.fd); b.fd = -1; }
+    {
+        std::lock_guard<std::mutex> lg(b.mtx);
+        if (write_n(b.fd, req, 2) != 2) { close(b.fd); b.fd = -1; bail(); return; }
+        char resp[1024]; ssize_t n = recv(b.fd, resp, sizeof(resp), 0);
+        if (n > 0) write_n(cfd, resp, static_cast<size_t>(n));
+        else { close(b.fd); b.fd = -1; }
+    }
+    close(cfd);
+    bail(true);
 }
 
 // ───────────── Signal handler for graceful shutdown ───────────────────────
@@ -161,14 +164,8 @@ int main() {
         int cfd = accept(listen_fd, nullptr, nullptr);
         if (cfd < 0) { if (errno == EINTR) break; perror("accept"); continue; }
 
-        if (active_workers.load(std::memory_order_relaxed) >= MAX_WORKERS) {
-            // too many threads, drop connection politely
-            close(cfd); continue;
-        }
+        if (active_workers.load(std::memory_order_relaxed) >= MAX_WORKERS) { close(cfd); continue; }
         active_workers.fetch_add(1, std::memory_order_relaxed);
-        std::thread([cfd]() {
-            handle_client(cfd);
-            active_workers.fetch_sub(1, std::memory_order_relaxed);
-        }).detach();
+        std::thread(handle_client, cfd).detach();
     }
 }
