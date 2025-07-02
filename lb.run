@@ -3,7 +3,7 @@
 cd "$(dirname "$0")/code"
 
 # (Re)compile if you like—comment out if you just want to run:
-g++ -std=c++11 -pthread -O2 -Wall lb.cpp -o lb || exit 1
+g++ -std=c++11 -pthread -O2 -Wall LB.cpp -o lb || exit 1
 
 
 # Launch the load-balancer
