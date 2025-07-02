@@ -1,3 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Move into the “code” folder where your LB binary lives
+cd "$(dirname "$0")/code"
 
-sudo python exampleLB.pyc
+# (Re)compile if you like—comment out if you just want to run:
+#g++ -std=c++17 -Wall -O2 LB.cpp -o lb || exit 1
+
+# Launch the load-balancer
+./lb
